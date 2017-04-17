@@ -1,0 +1,394 @@
+<?php
+
+/**
+ * @file
+ *   Creates a Represent Webform component.
+ */
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function webform_represent_form_webform_client_form_alter(&$form, &$form_state, $form_id) {
+  $represent_components = array();
+  foreach ($form_state['webform']['component_tree']['children'] as $key => $component) {
+    switch ($component['type']) {
+      case 'represent':
+        $represent_components[] = $component;
+        break;
+    }
+  }
+  if ($represent_components) {
+    // TODO: Pull this from an includes file
+    webform_represent_alter_form_component($form, $form_state, $represent_components);
+  }
+}
+
+/**
+ * Implements hook_webform_component_info().
+ */
+function webform_represent_webform_component_info() {
+  $components = array();
+
+  $components['represent'] = array(
+    'label' => t('Represent'),
+    'description' => t('Look up representatives by postal code.'),
+    'features' => array(
+      'csv' => TRUE,
+      'email' => TRUE,
+      'email_address' => TRUE,
+      'email_name' => FALSE,
+      'required' => TRUE,
+      'title_display' => TRUE,
+      'title_inline' => TRUE,
+      'conditional' => TRUE,
+      'group' => FALSE,
+      'spam_analysis' => FALSE,
+      'attachment' => FALSE,
+    ),
+    'file' => 'components/represent.inc',
+  );
+
+  return $components;
+}
+
+/*
+ *
+ */
+function webform_represent_alter_form_component(&$form, &$form_state, $components) {
+  $postal_code_keys = array();
+  $postal_code_ids = array();
+  $represent_names = array();
+
+  foreach ($components as $component) {
+    if ($component['extra']['postal_code_component']) {
+      $represent_names[] = 'submitted[' . $component['form_key'] . ']';
+
+      // This components postal code component's cid.
+      $postal_code_component = NULL;
+      $postal_code_component_cid = $component['extra']['postal_code_component'];
+
+      // Loop over submitted array to find this components associated key component.
+      foreach ($form['submitted'] as $value) {
+        if (is_array($value) && is_array($value['#webform_component'])) {
+          // If this component cid matches the value of our key component cid.
+          if (isset($value['#webform_component']['cid']) && $value['#webform_component']['cid'] == $postal_code_component_cid) {
+            $postal_code_component = $value['#webform_component'];
+          }
+        }
+      }
+
+      // If we found our key component & it exists on the same page as our current component,
+      // then we need to:
+      // 1) Add a wrapper around this component to later be replaced by ajax results.
+      // 2) Add our ajax callback to this components key component field.
+      if ($postal_code_component && $postal_code_component['page_num'] == $component['page_num']) {
+        // Add a wrapper around our component.
+        $wrapper = 'webform_represent_' . $component['form_key'] . '_replace';
+        $form['submitted'][$component['form_key']]['#prefix'] = '<div id="' . $wrapper . '">';
+        $form['submitted'][$component['form_key']]['#suffix'] = '</div>';
+        // We need to track this key components associated component form key so we know what portion of
+        // the form to update.
+        $form_state['build_info']['args']['postal_code_component_cids'][$postal_code_component_cid] = $component['form_key'];
+        $form_state['build_info']['args']['represent_element'][$component['cid']] = $component['form_key'];
+
+        $postal_code_id = $component['form_key'];//$module . '-' . $delta;
+        $postal_code_keys[] = $postal_code_component['form_key'];
+
+        $form['submitted'][$postal_code_component['form_key']]['#ajax'] = array(
+          'callback' => 'webform_represent_ajax_callback',
+          'event' => 'nmPostalCodeIsValid', // Use custom event to avoid interference from browser-generated events like "input" or "change".
+        );
+
+        // Hint at which values browsers should use for autofill / autocomplete.
+        $form['submitted'][$postal_code_component['form_key']]['#attributes']['autocomplete'] = 'postal-code';
+        $form['#attributes']['autocomplete'] = 'on';
+      }
+
+      // Check for relevant array keys before attempting to set values
+      if (array_key_exists('values', $form_state) && array_key_exists('submitted', $form) && array_key_exists('submitted', $form_state['values']) && array_key_exists($component['form_key'], $form['submitted'])) {
+        if (!array_key_exists($postal_code_component_cid, $form_state['values']['submitted'])) {
+          if ($postal_code_component['form_key'] && isset($form_state['values']['submitted'][$postal_code_component['form_key']])) {
+            // TODO: This is the funny call
+            $form_state['values']['submitted'][$postal_code_component_cid] = $form_state['values']['submitted'][$postal_code_component['form_key']];
+          }
+        }
+
+        if (isset($form_state['values']['submitted'][$component['extra']['postal_code_component']])) {
+          $postal_code = $form_state['values']['submitted'][$component['extra']['postal_code_component']];
+          if (isset($component['extra']['options_source'])) {
+            $representative_sets = array_values($component['extra']['options_source']);
+            if ($resources = represent_representatives_by_postal_code($postal_code, $representative_sets)) {
+              if ($options = webform_represent_resource_options($resources)) {
+                // TODO: We need to attach options to this form somewhere to use them later
+                $form['submitted'][$component['form_key']]['#options'] = $options;
+                if (empty($form_state['values']['submitted'][$component['cid']])) {
+                  if ($component['extra']['autoselect'] || $component['extra']['autoselect_hide']) {
+                    if ($component['extra']['multiple']) {
+                      $form['submitted'][$component['form_key']]['#default_value'] = array_keys($options);//'hidden';
+                    }
+                    else {
+                      $form['submitted'][$component['form_key']]['#default_value'] = key($options);//'hidden';
+                    }
+                    if ($component['extra']['hide'] || $component['extra']['autoselect_hide']) {
+                      $form['submitted'][$component['form_key']]['#type'] = 'hidden';
+                      $form['submitted'][$component['form_key']]['#title_display'] = 'none';
+                      $form['submitted'][$component['form_key']]['#value'] = $form['submitted'][$component['form_key']]['#default_value'];
+                    }
+                  }
+                }
+              }
+            } else {
+              // TODO: There were no resources found in Represent.  What should we do?
+              // TODO: Display error message at least
+              // Remove component, but if we use AJAX, replace it with the AJAX container markup instead.
+              if (isset($form['submitted'][$postal_code_component['form_key']]['#ajax'])) {
+                $form['submitted'][$component['form_key']] = array(
+                  '#type' => 'markup',
+                  '#markup' => $form['submitted'][$component['form_key']]['#prefix'] . $form['submitted'][$component['form_key']]['#suffix'],
+                );
+              }
+              else {
+                unset($form['submitted'][$component['form_key']]);
+              }
+            }
+          }
+        }
+      }
+      else {
+        if ($component['extra']['hide'] || $component['extra']['autoselect_hide']) {
+          $form['submitted'][$component['form_key']]['#title_display'] = 'none';
+        }
+      }
+      if (1 == count($form['submitted'][$component['form_key']]['#options'])) {
+        if ('' === $form['submitted'][$component['form_key']]['#options'][0]) {
+          $form['submitted'][$component['form_key']]['#options'] = array();
+          $form['submitted'][$component['form_key']]['#title_display'] = 'none';
+        }
+      }
+    }
+  }
+
+  if ($postal_code_keys) {
+    foreach ($postal_code_keys as $postal_code_key) {
+      $postal_code_ids[] = 'edit-submitted-' . str_replace('_', '-', $postal_code_key);
+    }
+    $webform_represent_settings = array(
+      'postalCodeKeys' => $postal_code_keys,
+      'postalCodeIds' => $postal_code_ids,
+      'representNames' => $represent_names,
+    );
+    // TODO: SHOULD ONLY be attaching when on same page
+    $form['#attached']['js'] = array(
+      array(
+        'data' => array(
+          'webform_represent' => $webform_represent_settings,
+        ),
+        'type' => 'setting',
+      ),
+      drupal_get_path('module', 'webform_represent') . '/js/webform_represent.js',
+    );
+  }
+}
+
+/**
+ * Pre render callback.
+ */
+function webform_represent_pre_render_cleanup($element) {
+  // So this is a bit of a puzzle.  Calling an empty pre_render
+  // seems to prevent the field label from appearing twice.
+  return $element;
+}
+
+/**
+ * @return array
+ *   The available representative sets keyed by machine name.
+ */
+function webform_represent_representative_sets() {
+  $representative_sets = array();
+
+  $resources = represent_representative_sets();
+  if (!empty($resources)) {
+    $skip = webform_represent_skip_representative_set();
+    foreach ($resources as $resource) {
+      $machine_name = represent_get_machine_name($resource->url);
+      if (!in_array($machine_name, $skip)) {
+        $representative_sets[$machine_name] = $resource;
+      }
+    }
+  }
+
+  return $representative_sets;
+}
+
+function webform_represent_format_resource($resource) {
+  if (isset($resource->email)) {
+    // Skips mayors.
+    if (!empty($resource->district_name)) {
+      return "$resource->name ($resource->district_name) $resource->elected_office, $resource->representative_set_name";
+    }
+  }
+  return '';
+}
+
+/**
+ * Option list containing the representatives in a representative set.
+ */
+function webform_represent_resource_options($resources) {
+  $options = array();
+  foreach ($resources as $representative_set => $set_resources) {
+    foreach ($set_resources as $resource) {
+      // TODO: OK Save the resource
+      if ($formatted_resource = webform_represent_format_resource($resource)) {
+        $options[$resource->email] = $formatted_resource;
+        $_SESSION['webform_represent_resources'][$resource->email] = $formatted_resource;
+        webform_represent_resource_save($resource, $representative_set, $resource->email);
+      }
+    }
+  }
+
+  // Remove representatives with non-unique emails.
+  foreach (array_count_values(array_keys($options)) as $email => $count) {
+    if ($count > 1) {
+      unset($options[$email]);
+
+      watchdog('Represent API', 'Duplicate email "@email" in set "@set"', array(
+          '@email' => $email,
+          '@set' => $representative_set,
+      ), WATCHDOG_WARNING);
+    }
+  }
+  asort($options);
+  return $options;
+}
+
+
+/**
+ * @return array
+ *   Machine names of representative sets containing representatives from
+ *   multiple jurisdictions.
+ */
+function webform_represent_skip_representative_set() {
+  return array(
+    /*
+        'elus-municipaux-du-quebec',
+        'municipal-officials-of-alberta',
+        'municipal-officials-of-british-columbia',
+    */
+  );
+}
+
+/**
+ * Returns the part of the form we want to update with ajax.
+ */
+function webform_represent_ajax_callback($form, $form_state) {
+  // Get the triggering element's cid and attempt to look up its associated element.
+  if (isset($form_state['triggering_element']['#webform_component']['cid'])) {
+    if ($cid = $form_state['triggering_element']['#webform_component']['cid']) {
+      $config = $form_state['build_info']['args']['postal_code_component_cids'][$cid];
+      $render_array = render($form['submitted'][$config]);
+      return [
+        '#type' => 'ajax',
+        '#commands' => [
+          ajax_command_replace('#webform_represent_' . $config . '_replace', render($render_array)),
+          // Re-enable submit button, now that the webform has all fully functional components.
+        ],
+      ];
+    }
+  }
+  $render_array = array('#markup' => t('There was a problem finding this key component\'s associated component.'));
+}
+
+/**
+ * Custom Theme function for collected Represent data.
+ */
+function theme_webform_display_represent($variables) {
+  $element = $variables['element'];
+  $value = $element['#value'];
+
+  return $value;
+}
+
+function webform_represent_resource_load($representative_set, $email) {
+  static $resources;
+  if (!isset($resources[$representative_set][$email])) {
+    // Load from DB
+    // TODO: Figure out how we can work in representative set
+    $result = db_select('webform_represent_resources', 'wrr')
+        ->fields('wrr', array('resource'))
+//        ->condition('representative_set', $representative_set, '=')
+        ->condition('email', $email, '=')
+        ->execute()
+        ->fetchAssoc();
+    if ($result) {
+      if ($resource = unserialize($result['resource'])) {
+        $resources[$representative_set][$email] = $resource;
+      }
+    }
+  }
+  if (isset($resources[$representative_set][$email])) {
+    return $resources[$representative_set][$email];
+  }
+}
+
+function webform_represent_resource_save($resource, $representative_set, $email) {
+  $serialized_resource = serialize($resource);
+  // db_select to check if current value exists
+  $result = db_select('webform_represent_resources', 'wrr')
+    ->fields('wrr', array('resource'))
+    ->condition('representative_set', $representative_set, '=')
+    ->condition('email', $email, '=')
+    ->execute()
+    ->fetchAssoc();
+  if ($result) {
+    // Compare DB value to current value
+    $db_serialized_resource = $result['resource'];
+    if (strcmp($serialized_resource, $db_serialized_resource)) {
+      // Save new serialized resource to the DB
+      db_update('webform_represent_resources')
+        ->fields(
+          array(
+            'resource' => $serialized_resource,
+          )
+        )
+        ->condition('representative_set', $representative_set, '=')
+        ->condition('email', $email, '=')
+        ->execute();
+    }
+  }
+  else {
+    // Insert new resource into the DB
+    db_insert('webform_represent_resources')
+      ->fields(
+        array(
+          'representative_set' => $representative_set,
+          'email' => $email,
+          'resource' => $serialized_resource,
+        )
+      )
+      ->execute();
+  }
+}
+
+/*
+ *
+ */
+function webform_represent_get_representatives($represent_sets, $emails, $multiple = FALSE) {
+  $representatives = array();
+  foreach ($represent_sets as $represent_set) {
+    if ($represent_set) {
+      foreach ($emails as $email) {
+        if ($email) {
+          if ($represent_resource = webform_represent_resource_load($represent_set, $email)) {
+            if ($multiple) {
+              $representatives[] = $represent_resource;
+            }
+            else {
+              return $represent_resource;
+            }
+          }
+        }
+      }
+    }
+  }
+  return $representatives;
+}

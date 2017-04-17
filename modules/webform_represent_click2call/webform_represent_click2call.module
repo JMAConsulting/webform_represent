@@ -1,0 +1,51 @@
+<?php
+
+/*
+ * Implements hook_click2call_webform_get_label()
+ */
+function webform_represent_click2call_click2call_webform_get_label($component, $value) {
+  switch ($component['type']) {
+    case 'represent':
+      if (isset($component['extra']['options_source'])) {
+        $representative = webform_represent_get_representatives(
+          $component['extra']['options_source'],
+          $value
+        );
+        if ($representative) {
+          return array(webform_represent_format_resource($representative));
+        }
+      }
+      // TODO: Set watchdog on error case
+      drupal_set_message(
+        t('Your Representative could not be found.  Something has gone wrong.'),
+        'error'
+      );
+      break;
+  }
+}
+
+/*
+ * Implements hook_click2call_webform_get_number()
+ */
+function webform_represent_click2call_click2call_webform_get_number($component, $value) {
+  switch ($component['#webform_component']['type']) {
+    case 'represent':
+      $representative = webform_represent_get_representatives(
+        $component['#webform_component']['extra']['options_source'],
+        $value
+      );
+      if (isset($representative)) {
+        if (isset($representative->offices[0]->tel)) {
+          return array($representative->offices[0]->tel);
+        }
+      }
+      break;
+  }
+}
+
+/*
+ * Implements hook_click2call_webform_get_number_types()
+ */
+function webform_represent_click2call_click2call_webform_get_number_types() {
+  return array('represent');
+}

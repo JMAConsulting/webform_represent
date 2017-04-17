@@ -1,0 +1,24 @@
+<?php
+
+function webform_represent_install() {
+  drupal_install_schema('webform_represent_resources');
+}
+
+function webform_represent_uninstall() {
+  drupal_uninstall_schema('webform_represent_resources');
+}
+
+/**
+* Implementation of hook_schema().
+*/
+function webform_represent_schema() {
+  $schema['webform_represent_resources'] = array(
+    'fields' => array(
+      'representative_set' => array('type' => 'varchar', 'not null' => TRUE, 'length' => 64),
+      'email' => array('type' => 'varchar', 'not null' => TRUE, 'length' => 64),
+      'resource' => array('type' => 'text', 'not null' => TRUE),
+    ),
+    'primary key' => array('representative_set', 'email'),
+  );
+  return $schema;
+}
