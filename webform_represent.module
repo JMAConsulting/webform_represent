@@ -122,14 +122,14 @@ function webform_represent_alter_form_component(&$form, &$form_state, $component
                 // TODO: We need to attach options to this form somewhere to use them later
                 $form['submitted'][$component['form_key']]['#options'] = $options;
                 if (empty($form_state['values']['submitted'][$component['cid']])) {
-                  if ($component['extra']['autoselect'] || $component['extra']['autoselect_hide']) {
+                  if ($component['extra']['autoselect']) {
                     if ($component['extra']['multiple']) {
                       $form['submitted'][$component['form_key']]['#default_value'] = array_keys($options);//'hidden';
                     }
                     else {
                       $form['submitted'][$component['form_key']]['#default_value'] = key($options);//'hidden';
                     }
-                    if ($component['extra']['hide'] || $component['extra']['autoselect_hide']) {
+                    if ($component['extra']['hide']) {
                       $form['submitted'][$component['form_key']]['#type'] = 'hidden';
                       $form['submitted'][$component['form_key']]['#title_display'] = 'none';
                       $form['submitted'][$component['form_key']]['#value'] = $form['submitted'][$component['form_key']]['#default_value'];
@@ -155,7 +155,7 @@ function webform_represent_alter_form_component(&$form, &$form_state, $component
         }
       }
       else {
-        if ($component['extra']['hide'] || $component['extra']['autoselect_hide']) {
+        if ($component['extra']['hide']) {
           $form['submitted'][$component['form_key']]['#title_display'] = 'none';
         }
       }

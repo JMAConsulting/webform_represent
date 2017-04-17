@@ -129,7 +129,7 @@ function _webform_edit_represent($component) {
   $form['represent_extra']['autoselect'] = array(
     '#title'         => t('Auto-Select'),
     '#type'          => 'checkbox',
-    '#default_value' => $component['extra']['autoselect'] || $component['extra']['autoselect_hide'],
+    '#default_value' => $component['extra']['autoselect'],
     '#description'   => t('Enabling this option will automatically select the matching representative(s). If "Allow Multiple Selections" is enabled, all representatives will be selected.  If "Allow Mutiple Selections" is disabled, the first matching representative will be auto-selected.'),
     '#parents' => array('extra', 'autoselect'),
     '#weight' => 3,
@@ -138,7 +138,7 @@ function _webform_edit_represent($component) {
   $form['represent_extra']['hide'] = array(
     '#title'         => t('Hide'),
     '#type'          => 'checkbox',
-    '#default_value' => $component['extra']['hide'] || $component['extra']['autoselect_hide'],
+    '#default_value' => $component['extra']['hide'],
     '#description'   => t('Enabling this option will automatically hide the component from the user. This option requires that "Auto-Select" is disabled.'),
     '#parents' => array('extra', 'hide'),
     '#weight' => 5,
